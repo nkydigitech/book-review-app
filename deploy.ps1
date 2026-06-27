@@ -52,8 +52,14 @@ kubectl apply -f k8s/backend/service.yaml
 kubectl apply -f k8s/frontend/deployment.yaml
 kubectl apply -f k8s/frontend/service.yaml
 
-kubectl rollout status deployment/backend  -n $NS --timeout=180s
-kubectl rollout status deployment/frontend -n $NS --timeout=180s
+# Force a fresh rollout so the newly pushed :latest image is actually re-pulled.
+# Without this, `kubectl apply` of an identical :latest manifest reports
+# "unchanged" and the cluster keeps running the OLD cached image.
+kubectl rollout restart deployment/backend  -n $NS
+kubectl rollout restart deployment/frontend -n $NS
+
+kubectl rollout status deployment/backend  -n $NS --timeout=300s
+kubectl rollout status deployment/frontend -n $NS --timeout=300s
 
 Write-Host "==> [7/7] Fetching public LoadBalancer URL..." -ForegroundColor Cyan
 Write-Host "Waiting ~45s for AWS ELB to provision..." -ForegroundColor Yellow
