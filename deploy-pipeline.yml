@@ -91,6 +91,8 @@ stages:
               sed -i "s|:latest|:$TAG|g" k8s/backend/deployment.yaml
               kubectl apply -f k8s/backend/deployment.yaml
               kubectl apply -f k8s/backend/service.yaml
+              # Force re-pull of the tag even if the manifest is unchanged
+              kubectl rollout restart deployment/backend -n $(K8S_NAMESPACE)
               kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --timeout=300s
 
         - task: AWSShellScript@1
@@ -105,6 +107,8 @@ stages:
               sed -i "s|:latest|:$TAG|g" k8s/frontend/deployment.yaml
               kubectl apply -f k8s/frontend/deployment.yaml
               kubectl apply -f k8s/frontend/service.yaml
+              # Force re-pull of the tag even if the manifest is unchanged
+              kubectl rollout restart deployment/frontend -n $(K8S_NAMESPACE)
               kubectl rollout status deployment/frontend -n $(K8S_NAMESPACE) --timeout=300s
 
         - task: AWSShellScript@1
