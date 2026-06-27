@@ -102,6 +102,9 @@ stages:
           deploy:
             steps:
 
+              # 0. Checkout source so k8s/ manifests are available
+              - checkout: self
+
               # 1. Configure kubectl for EKS
               - task: AWSShellScript@1
                 displayName: "Configure kubectl"
