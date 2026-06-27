@@ -1,8 +1,8 @@
 # terraform/modules/rds/main.tf
-# Phase 4 — Aurora MySQL cluster in private subnets
+# Phase 4 - Aurora MySQL cluster in private subnets
 
 # --------------------------------------------------
-# Security Group — allow MySQL from EKS worker nodes
+# Security Group - allow MySQL from EKS worker nodes
 # --------------------------------------------------
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds-sg"
@@ -32,11 +32,11 @@ resource "aws_security_group" "rds" {
 }
 
 # --------------------------------------------------
-# DB Subnet Group — use private subnets
+# DB Subnet Group - use private subnets
 # --------------------------------------------------
 resource "aws_db_subnet_group" "main" {
   name        = "${var.project_name}-db-subnet-group"
-  description = "Aurora MySQL subnet group — private subnets"
+  description = "Aurora MySQL subnet group - private subnets"
   subnet_ids  = var.private_subnet_ids
 
   tags = {
