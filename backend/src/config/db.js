@@ -1,7 +1,7 @@
 const { Sequelize } = require("sequelize");
 require("dotenv").config();
 
-const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, process.env.DB_PASS, {
+const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, process.env.DB_PASSWORD, {
   host: process.env.DB_HOST,
   dialect: "mysql",
   port: process.env.DB_PORT || 3306,
@@ -9,7 +9,7 @@ const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, proces
   dialectOptions: {
     ssl: {
       require: true,
-      rejectUnauthorized: false, // Required for Azure MySQL SSL connections
+      rejectUnauthorized: false,
     },
   },
 });
@@ -17,11 +17,11 @@ const sequelize = new Sequelize(process.env.DB_NAME, process.env.DB_USER, proces
 async function initializeDatabase() {
   try {
     await sequelize.authenticate();
-    console.log(`Database '${process.env.DB_NAME}' connected successfully with SSL!`);
+    console.log(`Database '${process.env.DB_NAME}' connected successfully!`);
     return sequelize;
   } catch (error) {
-    console.error("Database initialization failed:", error);
-    process.exit(1);
+    console.error("Database initialization failed:", error.message);
+    throw error; // let the caller handle it — do NOT call process.exit() here
   }
 }
 
