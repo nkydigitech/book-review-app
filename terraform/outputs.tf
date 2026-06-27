@@ -1,7 +1,14 @@
-# ── VPC Outputs ───────────────────────────────────────────────────────────────
+# terraform/outputs.tf
+
+# ── VPC ──────────────────────────────────────────────────────────────────────
 output "vpc_id" {
-  description = "The ID of the VPC"
+  description = "ID of the created VPC"
   value       = module.vpc.vpc_id
+}
+
+output "vpc_cidr_block" {
+  description = "CIDR block of the VPC"
+  value       = module.vpc.vpc_cidr_block
 }
 
 output "public_subnet_ids" {
@@ -14,28 +21,44 @@ output "private_subnet_ids" {
   value       = module.vpc.private_subnet_ids
 }
 
-output "vpc_cidr_block" {
-  description = "The CIDR block of the VPC"
-  value       = module.vpc.vpc_cidr_block
-}
-
-# ── EKS Outputs ───────────────────────────────────────────────────────────────
-output "eks_cluster_name" {
+# ── EKS ──────────────────────────────────────────────────────────────────────
+output "cluster_name" {
   description = "Name of the EKS cluster"
   value       = module.eks.cluster_name
 }
 
-output "eks_cluster_endpoint" {
-  description = "API server endpoint of the EKS cluster"
+output "cluster_endpoint" {
+  description = "Endpoint for the EKS cluster"
   value       = module.eks.cluster_endpoint
 }
 
+output "ecr_backend_url" {
+  description = "ECR URL for the backend image"
+  value       = module.eks.ecr_backend_url
+}
+
 output "ecr_frontend_url" {
-  description = "ECR repository URL for the frontend image"
+  description = "ECR URL for the frontend image"
   value       = module.eks.ecr_frontend_url
 }
 
-output "ecr_backend_url" {
-  description = "ECR repository URL for the backend image"
-  value       = module.eks.ecr_backend_url
+# ── RDS ──────────────────────────────────────────────────────────────────────
+output "db_cluster_endpoint" {
+  description = "Aurora MySQL writer endpoint"
+  value       = module.rds.db_cluster_endpoint
+}
+
+output "db_cluster_reader_endpoint" {
+  description = "Aurora MySQL reader endpoint"
+  value       = module.rds.db_cluster_reader_endpoint
+}
+
+output "db_name" {
+  description = "Database name"
+  value       = module.rds.db_name
+}
+
+output "db_port" {
+  description = "Database port"
+  value       = module.rds.db_port
 }
