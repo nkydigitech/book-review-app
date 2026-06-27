@@ -1,17 +1,15 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# Book Review App — Terraform Entry Point
-# Orchestrates VPC, EKS, and RDS modules
-# ─────────────────────────────────────────────────────────────────────────────
+# terraform/main.tf
+# Root configuration — calls VPC, EKS, and RDS modules
 
 module "vpc" {
   source = "./modules/vpc"
 
-  project_name         = var.project_name
-  environment          = var.environment
-  vpc_cidr             = var.vpc_cidr
-  public_subnet_cidrs  = var.public_subnet_cidrs
+  project_name        = var.project_name
+  environment         = var.environment
+  vpc_cidr            = var.vpc_cidr
+  public_subnet_cidrs = var.public_subnet_cidrs
   private_subnet_cidrs = var.private_subnet_cidrs
-  availability_zones   = var.availability_zones
+  availability_zones  = var.availability_zones
 }
 
 module "eks" {
@@ -20,17 +18,24 @@ module "eks" {
   project_name       = var.project_name
   environment        = var.environment
   vpc_id             = module.vpc.vpc_id
-  public_subnet_ids  = module.vpc.public_subnet_ids
   private_subnet_ids = module.vpc.private_subnet_ids
-  kubernetes_version = var.kubernetes_version
+  public_subnet_ids  = module.vpc.public_subnet_ids
+  cluster_version    = var.cluster_version
   node_instance_type = var.node_instance_type
   node_desired_size  = var.node_desired_size
   node_min_size      = var.node_min_size
   node_max_size      = var.node_max_size
 }
 
-# RDS module — added in Phase 4
-# module "rds" {
-#   source = "./modules/rds"
-#   ...
-# }
+module "rds" {
+  source = "./modules/rds"
+
+  project_name       = var.project_name
+  environment        = var.environment
+  vpc_id             = module.vpc.vpc_id
+  vpc_cidr           = module.vpc.vpc_cidr_block
+  private_subnet_ids = module.vpc.private_subnet_ids
+  db_name            = var.db_name
+  db_username        = var.db_username
+  db_password        = var.db_password
+}
