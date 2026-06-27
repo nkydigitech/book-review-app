@@ -1,21 +1,16 @@
-# Use Node.js LTS as base image
-FROM node:18
-
-# Set working directory
+# ── Stage 1: install dependencies ──────────────────────────────────────────────
+FROM node:18-alpine AS deps
 WORKDIR /app
-
-# Copy package.json and package-lock.json
 COPY package*.json ./
+RUN npm ci --only=production
 
-# Install dependencies
-RUN npm install
+# ── Stage 2: runtime image ─────────────────────────────────────────────────────
+FROM node:18-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
 
-# Copy the rest of the application files
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Expose the port the backend runs on
 EXPOSE 3001
-
-# Start the backend server
-CMD ["node", "src/server.js"]
-
+CMD ["node", "server.js"]
