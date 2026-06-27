@@ -113,6 +113,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     aws eks update-kubeconfig \
                       --region $(AWS_REGION) \
                       --name $(EKS_CLUSTER)
@@ -126,6 +127,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     kubectl apply -f k8s/namespace.yaml
 
               # 3. Create/update DB secret
@@ -136,6 +138,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     kubectl create secret generic backend-secret \
                       --namespace=$(K8S_NAMESPACE) \
                       --from-literal=DB_USER="$(DB_USER)" \
@@ -150,6 +153,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     kubectl apply -f k8s/backend/configmap.yaml
                     kubectl apply -f k8s/frontend/configmap.yaml
 
@@ -161,6 +165,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     ECR_BACKEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-backend"
                     sed -i "s|:latest|:$(Build.BuildId)|g" k8s/backend/deployment.yaml
                     kubectl apply -f k8s/backend/deployment.yaml
@@ -175,6 +180,7 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     ECR_FRONTEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-frontend"
                     sed -i "s|:latest|:$(Build.BuildId)|g" k8s/frontend/deployment.yaml
                     kubectl apply -f k8s/frontend/deployment.yaml
@@ -189,9 +195,11 @@ stages:
                   regionName: "$(AWS_REGION)"
                   scriptType: "inline"
                   inlineScript: |
+                    cd $(Build.SourcesDirectory)
                     echo "Waiting for LoadBalancer to get external IP..."
                     sleep 30
                     kubectl get svc frontend-service -n $(K8S_NAMESPACE) \
                       -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
                     echo ""
                     echo "App is live at the URL above!"
+
