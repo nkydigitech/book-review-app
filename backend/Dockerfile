@@ -13,4 +13,4 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 EXPOSE 3001
-CMD ["node", "server.js"]
+CMD ["node", "src/server.js"]
