@@ -1,0 +1,199 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Book Review App — Azure DevOps CI/CD Pipeline
+# Triggers on every push to main.
+# Stages: Build → Push → Deploy
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - terraform/**
+      - screenshots/**
+      - "*.md"
+
+variables:
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "483519904572"
+  ECR_BACKEND: "$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-backend"
+  ECR_FRONTEND: "$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-frontend"
+  EKS_CLUSTER: "book-review-production-cluster"
+  K8S_NAMESPACE: "book-review"
+  IMAGE_TAG: "$(Build.BuildId)"
+
+stages:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 1: BUILD & PUSH DOCKER IMAGES TO ECR
+# ─────────────────────────────────────────────────────────────────────────────
+- stage: Build
+  displayName: "Build & Push to ECR"
+  jobs:
+    - job: BuildAndPush
+      displayName: "Docker Build + ECR Push"
+      pool:
+        vmImage: "ubuntu-latest"
+      steps:
+
+        # 1. Configure AWS credentials
+        - task: AWSShellScript@1
+          displayName: "Configure AWS credentials"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              aws ecr get-login-password --region $(AWS_REGION) | \
+                docker login --username AWS --password-stdin \
+                $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
+              echo "ECR login successful"
+
+        # 2. Build & push BACKEND image
+        - task: Docker@2
+          displayName: "Build backend image"
+          inputs:
+            command: build
+            buildContext: "$(Build.SourcesDirectory)/backend"
+            dockerfile: "$(Build.SourcesDirectory)/backend/Dockerfile"
+            tags: |
+              $(ECR_BACKEND):$(IMAGE_TAG)
+              $(ECR_BACKEND):latest
+
+        - task: AWSShellScript@1
+          displayName: "Push backend image to ECR"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              docker push $(ECR_BACKEND):$(IMAGE_TAG)
+              docker push $(ECR_BACKEND):latest
+
+        # 3. Build & push FRONTEND image
+        - task: Docker@2
+          displayName: "Build frontend image"
+          inputs:
+            command: build
+            buildContext: "$(Build.SourcesDirectory)/frontend"
+            dockerfile: "$(Build.SourcesDirectory)/frontend/Dockerfile"
+            tags: |
+              $(ECR_FRONTEND):$(IMAGE_TAG)
+              $(ECR_FRONTEND):latest
+
+        - task: AWSShellScript@1
+          displayName: "Push frontend image to ECR"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              docker push $(ECR_FRONTEND):$(IMAGE_TAG)
+              docker push $(ECR_FRONTEND):latest
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STAGE 2: DEPLOY TO EKS
+# ─────────────────────────────────────────────────────────────────────────────
+- stage: Deploy
+  displayName: "Deploy to EKS"
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+    - deployment: DeployToEKS
+      displayName: "kubectl apply to EKS"
+      pool:
+        vmImage: "ubuntu-latest"
+      environment: "production"
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+
+              # 1. Configure kubectl for EKS
+              - task: AWSShellScript@1
+                displayName: "Configure kubectl"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    aws eks update-kubeconfig \
+                      --region $(AWS_REGION) \
+                      --name $(EKS_CLUSTER)
+                    kubectl version --client
+
+              # 2. Create namespace if not exists
+              - task: AWSShellScript@1
+                displayName: "Apply namespace"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    kubectl apply -f k8s/namespace.yaml
+
+              # 3. Create/update DB secret (values come from pipeline variables)
+              - task: AWSShellScript@1
+                displayName: "Apply backend secret"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    kubectl create secret generic backend-secret \
+                      --namespace=$(K8S_NAMESPACE) \
+                      --from-literal=DB_USER="$(DB_USER)" \
+                      --from-literal=DB_PASSWORD="$(DB_PASSWORD)" \
+                      --dry-run=client -o yaml | kubectl apply -f -
+
+              # 4. Apply ConfigMaps
+              - task: AWSShellScript@1
+                displayName: "Apply ConfigMaps"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    kubectl apply -f k8s/backend/configmap.yaml
+                    kubectl apply -f k8s/frontend/configmap.yaml
+
+              # 5. Update image tags and apply Deployments
+              - task: AWSShellScript@1
+                displayName: "Deploy backend"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    sed -i "s|:latest|:$(IMAGE_TAG)|g" k8s/backend/deployment.yaml
+                    kubectl apply -f k8s/backend/deployment.yaml
+                    kubectl apply -f k8s/backend/service.yaml
+                    kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --timeout=120s
+
+              - task: AWSShellScript@1
+                displayName: "Deploy frontend"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    sed -i "s|:latest|:$(IMAGE_TAG)|g" k8s/frontend/deployment.yaml
+                    kubectl apply -f k8s/frontend/deployment.yaml
+                    kubectl apply -f k8s/frontend/service.yaml
+                    kubectl rollout status deployment/frontend -n $(K8S_NAMESPACE) --timeout=120s
+
+              # 6. Print LoadBalancer URL
+              - task: AWSShellScript@1
+                displayName: "Get LoadBalancer URL"
+                inputs:
+                  awsCredentials: "AWS-ServiceConnection"
+                  regionName: "$(AWS_REGION)"
+                  scriptType: "inline"
+                  inlineScript: |
+                    echo "Waiting for LoadBalancer to get external IP..."
+                    sleep 30
+                    kubectl get svc frontend-service -n $(K8S_NAMESPACE) \
+                      -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+                    echo ""
+                    echo "App is live at the URL above!"
