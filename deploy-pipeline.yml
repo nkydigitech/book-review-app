@@ -1,0 +1,124 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Book Review App — Deploy-Only Pipeline
+#
+# Runs the deploy stage WITHOUT rebuilding images.
+# Use this when the build already passed and you only need to re-deploy.
+#
+# How to use:
+#   Azure DevOps → Pipelines → "Deploy to EKS (manual)" → Run pipeline
+#   Override IMAGE_TAG if you want a specific build (e.g. "185").
+#   Leave IMAGE_TAG as "latest" to deploy the most recently pushed image.
+# ─────────────────────────────────────────────────────────────────────────────
+
+trigger: none   # ← manual only, never auto-triggered
+
+parameters:
+  - name: IMAGE_TAG
+    displayName: "Image tag to deploy (default: latest)"
+    type: string
+    default: "latest"
+
+variables:
+  AWS_REGION: "us-east-1"
+  AWS_ACCOUNT_ID: "483519904572"
+  EKS_CLUSTER: "book-review-production-cluster"
+  K8S_NAMESPACE: "book-review"
+
+stages:
+- stage: Deploy
+  displayName: "Deploy to EKS"
+  jobs:
+    - job: DeployToEKS
+      displayName: "kubectl apply — tag: ${{ parameters.IMAGE_TAG }}"
+      pool:
+        vmImage: "ubuntu-latest"
+      steps:
+
+        - task: AWSShellScript@1
+          displayName: "Configure kubectl"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              cd $(Build.SourcesDirectory)
+              aws eks update-kubeconfig --region $(AWS_REGION) --name $(EKS_CLUSTER)
+              kubectl version --client
+
+        - task: AWSShellScript@1
+          displayName: "Apply namespace"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              cd $(Build.SourcesDirectory)
+              kubectl apply -f k8s/namespace.yaml
+
+        - task: AWSShellScript@1
+          displayName: "Apply backend secret"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              kubectl create secret generic backend-secret \
+                --namespace=$(K8S_NAMESPACE) \
+                --from-literal=DB_USER="$(DB_USER)" \
+                --from-literal=DB_PASSWORD="$(DB_PASSWORD)" \
+                --dry-run=client -o yaml | kubectl apply -f -
+
+        - task: AWSShellScript@1
+          displayName: "Apply ConfigMaps"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              cd $(Build.SourcesDirectory)
+              kubectl apply -f k8s/backend/configmap.yaml
+              kubectl apply -f k8s/frontend/configmap.yaml
+
+        - task: AWSShellScript@1
+          displayName: "Deploy backend — ${{ parameters.IMAGE_TAG }}"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              cd $(Build.SourcesDirectory)
+              TAG="${{ parameters.IMAGE_TAG }}"
+              sed -i "s|:latest|:$TAG|g" k8s/backend/deployment.yaml
+              kubectl apply -f k8s/backend/deployment.yaml
+              kubectl apply -f k8s/backend/service.yaml
+              kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --timeout=300s
+
+        - task: AWSShellScript@1
+          displayName: "Deploy frontend — ${{ parameters.IMAGE_TAG }}"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              cd $(Build.SourcesDirectory)
+              TAG="${{ parameters.IMAGE_TAG }}"
+              sed -i "s|:latest|:$TAG|g" k8s/frontend/deployment.yaml
+              kubectl apply -f k8s/frontend/deployment.yaml
+              kubectl apply -f k8s/frontend/service.yaml
+              kubectl rollout status deployment/frontend -n $(K8S_NAMESPACE) --timeout=300s
+
+        - task: AWSShellScript@1
+          displayName: "Get LoadBalancer URL"
+          inputs:
+            awsCredentials: "AWS-ServiceConnection"
+            regionName: "$(AWS_REGION)"
+            scriptType: "inline"
+            inlineScript: |
+              echo "Waiting for LoadBalancer..."
+              sleep 30
+              URL=$(kubectl get svc frontend-service -n $(K8S_NAMESPACE) \
+                -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
+              echo ""
+              echo "=========================================="
+              echo "App is live at: http://$URL"
+              echo "=========================================="
