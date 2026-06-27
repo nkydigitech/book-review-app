@@ -1,7 +1,8 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Book Review App — Azure DevOps CI/CD Pipeline
-# Triggers on every push to main.
-# Stages: Build → Push → Deploy
+# Stage 1: Build & Push  (triggered on every push to main)
+# Stage 2: Deploy to EKS
+# To re-deploy without rebuilding, run deploy-pipeline.yml manually.
 # ─────────────────────────────────────────────────────────────────────────────
 
 trigger:
@@ -37,7 +38,6 @@ stages:
         vmImage: "ubuntu-latest"
       steps:
 
-        # 1. Login to ECR
         - task: AWSShellScript@1
           displayName: "ECR Login"
           inputs:
@@ -50,7 +50,6 @@ stages:
                 $(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
               echo "ECR login successful"
 
-        # 2. Build & push BACKEND image
         - task: AWSShellScript@1
           displayName: "Build & Push backend image"
           inputs:
@@ -59,15 +58,13 @@ stages:
             scriptType: "inline"
             inlineScript: |
               ECR_BACKEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-backend"
-              echo "Building backend: $ECR_BACKEND:$(Build.BuildId)"
               docker build -t $ECR_BACKEND:$(Build.BuildId) \
                            -t $ECR_BACKEND:latest \
                            $(Build.SourcesDirectory)/backend
               docker push $ECR_BACKEND:$(Build.BuildId)
               docker push $ECR_BACKEND:latest
-              echo "Backend pushed successfully"
+              echo "Backend pushed: $ECR_BACKEND:$(Build.BuildId)"
 
-        # 3. Build & push FRONTEND image
         - task: AWSShellScript@1
           displayName: "Build & Push frontend image"
           inputs:
@@ -76,13 +73,12 @@ stages:
             scriptType: "inline"
             inlineScript: |
               ECR_FRONTEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-frontend"
-              echo "Building frontend: $ECR_FRONTEND:$(Build.BuildId)"
               docker build -t $ECR_FRONTEND:$(Build.BuildId) \
                            -t $ECR_FRONTEND:latest \
                            $(Build.SourcesDirectory)/frontend
               docker push $ECR_FRONTEND:$(Build.BuildId)
               docker push $ECR_FRONTEND:latest
-              echo "Frontend pushed successfully"
+              echo "Frontend pushed: $ECR_FRONTEND:$(Build.BuildId)"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STAGE 2: DEPLOY TO EKS
@@ -92,15 +88,12 @@ stages:
   dependsOn: Build
   condition: succeeded()
   jobs:
-    # Regular job (NOT a deployment job): source is auto-checked-out to
-    # $(Build.SourcesDirectory), so k8s/ manifests are reliably on disk.
     - job: DeployToEKS
       displayName: "kubectl apply to EKS"
       pool:
         vmImage: "ubuntu-latest"
       steps:
 
-        # 1. Configure kubectl for EKS (+ confirm repo is on disk)
         - task: AWSShellScript@1
           displayName: "Configure kubectl"
           inputs:
@@ -109,17 +102,9 @@ stages:
             scriptType: "inline"
             inlineScript: |
               cd $(Build.SourcesDirectory)
-              echo "=== Working dir: $(pwd) ==="
-              echo "=== Repo contents ==="
-              ls -la
-              echo "=== k8s/ contents ==="
-              ls -la k8s/ || echo "k8s/ NOT FOUND"
-              aws eks update-kubeconfig \
-                --region $(AWS_REGION) \
-                --name $(EKS_CLUSTER)
+              aws eks update-kubeconfig --region $(AWS_REGION) --name $(EKS_CLUSTER)
               kubectl version --client
 
-        # 2. Apply namespace
         - task: AWSShellScript@1
           displayName: "Apply namespace"
           inputs:
@@ -130,7 +115,6 @@ stages:
               cd $(Build.SourcesDirectory)
               kubectl apply -f k8s/namespace.yaml
 
-        # 3. Create/update DB secret
         - task: AWSShellScript@1
           displayName: "Apply backend secret"
           inputs:
@@ -138,14 +122,12 @@ stages:
             regionName: "$(AWS_REGION)"
             scriptType: "inline"
             inlineScript: |
-              cd $(Build.SourcesDirectory)
               kubectl create secret generic backend-secret \
                 --namespace=$(K8S_NAMESPACE) \
                 --from-literal=DB_USER="$(DB_USER)" \
                 --from-literal=DB_PASSWORD="$(DB_PASSWORD)" \
                 --dry-run=client -o yaml | kubectl apply -f -
 
-        # 4. Apply ConfigMaps
         - task: AWSShellScript@1
           displayName: "Apply ConfigMaps"
           inputs:
@@ -157,7 +139,6 @@ stages:
               kubectl apply -f k8s/backend/configmap.yaml
               kubectl apply -f k8s/frontend/configmap.yaml
 
-        # 5. Deploy backend
         - task: AWSShellScript@1
           displayName: "Deploy backend"
           inputs:
@@ -166,13 +147,11 @@ stages:
             scriptType: "inline"
             inlineScript: |
               cd $(Build.SourcesDirectory)
-              ECR_BACKEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-backend"
               sed -i "s|:latest|:$(Build.BuildId)|g" k8s/backend/deployment.yaml
               kubectl apply -f k8s/backend/deployment.yaml
               kubectl apply -f k8s/backend/service.yaml
-              kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --timeout=120s
+              kubectl rollout status deployment/backend -n $(K8S_NAMESPACE) --timeout=300s
 
-        # 6. Deploy frontend
         - task: AWSShellScript@1
           displayName: "Deploy frontend"
           inputs:
@@ -181,13 +160,11 @@ stages:
             scriptType: "inline"
             inlineScript: |
               cd $(Build.SourcesDirectory)
-              ECR_FRONTEND="$(AWS_ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com/book-review-frontend"
               sed -i "s|:latest|:$(Build.BuildId)|g" k8s/frontend/deployment.yaml
               kubectl apply -f k8s/frontend/deployment.yaml
               kubectl apply -f k8s/frontend/service.yaml
-              kubectl rollout status deployment/frontend -n $(K8S_NAMESPACE) --timeout=120s
+              kubectl rollout status deployment/frontend -n $(K8S_NAMESPACE) --timeout=300s
 
-        # 7. Print LoadBalancer URL
         - task: AWSShellScript@1
           displayName: "Get LoadBalancer URL"
           inputs:
@@ -195,10 +172,11 @@ stages:
             regionName: "$(AWS_REGION)"
             scriptType: "inline"
             inlineScript: |
-              cd $(Build.SourcesDirectory)
-              echo "Waiting for LoadBalancer to get external IP..."
+              echo "Waiting for LoadBalancer to get external hostname..."
               sleep 30
-              kubectl get svc frontend-service -n $(K8S_NAMESPACE) \
-                -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"
+              URL=$(kubectl get svc frontend-service -n $(K8S_NAMESPACE) \
+                -o jsonpath="{.status.loadBalancer.ingress[0].hostname}")
               echo ""
-              echo "App is live at the URL above!"
+              echo "=========================================="
+              echo "App is live at: http://$URL"
+              echo "=========================================="
