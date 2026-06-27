@@ -1,21 +1,29 @@
-# Use Node.js LTS as base image
-FROM node:18
-
-# Set working directory
+# ── Stage 1: install deps ──────────────────────────────────────────────────────
+FROM node:18-alpine AS deps
 WORKDIR /app
-
-# Copy package.json and package-lock.json
 COPY package*.json ./
+RUN npm ci
 
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application files
+# ── Stage 2: build ─────────────────────────────────────────────────────────────
+FROM node:18-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN npm run build
 
-# Expose the Next.js port
+# ── Stage 3: production runtime ────────────────────────────────────────────────
+FROM node:18-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser  --system --uid 1001 nextjs
+
+COPY --from=builder /app/public        ./public
+COPY --from=builder /app/.next         ./.next
+COPY --from=builder /app/node_modules  ./node_modules
+COPY --from=builder /app/package.json  ./package.json
+
+USER nextjs
 EXPOSE 3000
-
-# Start Next.js in development mode
-CMD ["npm", "run", "dev"]
-
+CMD ["npm", "start"]
